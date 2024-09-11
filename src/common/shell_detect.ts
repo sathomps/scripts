@@ -1,8 +1,7 @@
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
-import { logger } from './logging';
-
+import {logger} from './common';
 interface ShellConfig {
   currentShell: string;
   configDir: string;
@@ -92,7 +91,4 @@ export function detectShellAndConfig(): ShellConfig {
 
   return config;
 }
-
-// Call the function to detect the shell and set variables
-
 // You can now use shellConfig.currentShell, shellConfig.configDir, shellConfig.rcFile, and shellConfig.profileFile in your script

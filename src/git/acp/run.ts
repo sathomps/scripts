@@ -1,94 +1,18 @@
 import { execSync } from 'child_process';
-import * as readline from 'readline';
-import { loadConfig } from './config/config';
-import { logger } from '../../common/logging';
-import { handleError } from '../../common/common';
-import { detectShellAndConfig } from '../../common/shell_detect';
+import { loadConfig } from './config';
+import {
+  handleError,
+  retryCommand,
+  executeCommand,
+  logger,
+  confirmAction,
+} from '../../common/common';
 
+import { detectShellAndConfig } from '../../common/shell_detect';
 
 const config = loadConfig();
 detectShellAndConfig();
 
-// Git operations
-function performGitAdd(): void {
-  executeCommand('git add .');
-}
-
-function performGitCommit(commitMsg: string): void {
-  executeCommand(`git commit -m "${commitMsg}"`);
-}
-
-function performGitPush(): boolean {
-  for (let i = 1; i <= config.retry_attempts; i++) {
-    try {
-      executeCommand('git push');
-      return true;
-    } catch (error) {
-      logger.error(`Push failed, retrying (${i}/${config.retry_attempts})...`);
-      if (i === config.retry_attempts) return false;
-    }
-  }
-  return false;
-}
-
-function createNewBranch(branchName: string): void {
-  executeCommand(`git checkout -b ${branchName}`);
-}
-
-function createTag(tagName: string): void {
-  executeCommand(`git tag ${tagName} && git push origin ${tagName}`);
-}
-
-function performInteractiveRebase(): void {
-  executeCommand('git rebase -i');
-}
-
-function performSquash(): void {
-  executeCommand('git rebase -i HEAD~2');
-}
-
-function showDiff(): string {
-  return execSync('git diff', { encoding: 'utf-8' });
-}
-
-// Utilities
-function executeCommand(cmd: string): void {
-  if (config.dry_run) {
-    logger.info(`Dry-run: ${cmd}`);
-  } else {
-    execSync(cmd, { stdio: 'inherit' });
-  }
-}
-
-function confirmAction(prompt: string): Promise<boolean> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return new Promise((resolve) => {
-    rl.question(`${prompt} (y/n): `, (answer) => {
-      rl.close();
-      resolve(answer.toLowerCase() === 'y');
-    });
-  });
-}
-
-// Main operations
-function performCommit(commitMsg: string): void {
-  performGitAdd();
-  performGitCommit(commitMsg);
-}
-
-async function performPush(): Promise<void> {
-  if (await confirmAction('Do you want to push the changes?')) {
-    const success = performGitPush();
-    if (!success)
-      logger.error(`Failed to push after ${config.retry_attempts} attempts`);
-  }
-}
-
-// Command line argument parsing
 interface Arguments {
   commitMsg?: string;
   newBranch?: string;
@@ -96,7 +20,66 @@ interface Arguments {
   squashFlag?: boolean;
   interactiveRebaseFlag?: boolean;
   tagName?: string;
+  [key: string]: any;
 }
+
+// Git operations
+function performGitAdd(): void {
+  executeCommand('git add .', config.dryRun);
+}
+
+function performGitCommit(commitMsg: string): void {
+  executeCommand(`git commit -m "${commitMsg}"`, config.dryRun);
+}
+
+function performGitPush(): boolean {
+  return retryCommand('git push', config.retryAttempts, config.dryRun);
+}
+
+function createNewBranch(branchName: string): void {
+  executeCommand(`git checkout -b ${branchName}`, config.dryRun);
+}
+
+function createTag(tagName: string): void {
+  executeCommand(
+    `git tag ${tagName} && git push origin ${tagName}`,
+    config.dryRun,
+  );
+}
+
+function performInteractiveRebase(): void {
+  executeCommand('git rebase -i', config.dryRun);
+}
+
+function performSquash(): void {
+  executeCommand('git rebase -i HEAD~2', config.dryRun);
+}
+
+function showDiff(): string {
+  return execSync('git diff', { encoding: 'utf-8' });
+}
+
+async function handleShowDiffAndConfirm(): Promise<boolean> {
+  logger.info(showDiff());
+  return confirmAction('Do you want to continue with the commit?');
+}
+
+async function handlePushWithTag(tagName?: string): Promise<void> {
+  if (await confirmAction('Do you want to push the changes?')) {
+    const success = performGitPush();
+    if (success && tagName) createTag(tagName);
+  }
+}
+
+function performCommit(commitMsg: string): void {
+  performGitAdd();
+  performGitCommit(commitMsg);
+}
+
+function checkGitRepo() {
+  throw new Error('Function not implemented.');
+}
+
 
 function parseArguments(args: string[]): Arguments {
   const parsed: Arguments = {};
@@ -132,7 +115,7 @@ function parseArguments(args: string[]): Arguments {
         break;
       case '-n':
       case '--dry-run':
-        config.dry_run = true;
+        config.dryRun = true;
         break;
       case '-h':
       case '--help':
@@ -146,47 +129,32 @@ function parseArguments(args: string[]): Arguments {
   return parsed;
 }
 
+
 function showHelp(): void {
   logger.info('Usage: ts-node run.ts [options]');
-  // Add more help text here
 }
+
 
 // Main execution
 async function main(args: string[]): Promise<void> {
   try {
     const parsedArgs = parseArguments(args);
+    const commitMsg = parsedArgs.commitMsg || config.defaultCommitMsg;
 
-    const commitMsg = parsedArgs.commitMsg || config.default_commit_msg;
+    checkGitRepo();
 
-    // Assuming check_git_repo is implemented elsewhere
-    // checkGitRepo();
+    if (parsedArgs.showDiffFlag && !(await handleShowDiffAndConfirm()))
+      process.exit(0);
 
-    if (parsedArgs.showDiffFlag) {
-      logger.info(showDiff());
-      if (!(await confirmAction('Do you want to continue with the commit?'))) {
-        process.exit(0);
-      }
-    }
-
-    if (parsedArgs.newBranch) {
-      createNewBranch(parsedArgs.newBranch);
-    }
+    if (parsedArgs.newBranch) createNewBranch(parsedArgs.newBranch);
 
     performCommit(commitMsg);
 
-    if (parsedArgs.squashFlag) {
-      performSquash();
-    }
+    if (parsedArgs.squashFlag) performSquash();
 
-    if (parsedArgs.interactiveRebaseFlag) {
-      performInteractiveRebase();
-    }
+    if (parsedArgs.interactiveRebaseFlag) performInteractiveRebase();
 
-    await performPush();
-
-    if (parsedArgs.tagName) {
-      createTag(parsedArgs.tagName);
-    }
+    await handlePushWithTag(parsedArgs.tagName);
 
     logger.info('Operation completed successfully.');
   } catch (error: unknown) {
@@ -196,3 +164,4 @@ async function main(args: string[]): Promise<void> {
 }
 
 main(process.argv.slice(2));
+
