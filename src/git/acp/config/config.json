@@ -1,0 +1,7 @@
+{
+  "retry_attempts": 3,
+  "default_commit_msg": "Auto Commit",
+  "default_branch": "main",
+  "verbose": false,
+  "dry_run": false
+}
